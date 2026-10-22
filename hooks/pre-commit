@@ -1,0 +1,39 @@
+
+#!/usr/bin/env bash
+
+# Check staged files for secret-like patterns and files over 1 MB.
+
+set -u
+
+failed=0
+
+while IFS= read -r -d '' file; do
+    # Get the staged version of the file.
+    content=$(git show ":$file" 2>/dev/null) || {
+        echo "ERROR: Could not read staged file: $file"
+        failed=1
+        continue
+    }
+
+    # Check staged file size (1 MB = 1,048,576 bytes).
+    size=$(git cat-file -s ":$file" 2>/dev/null) || size=0
+    if [ "$size" -gt 1048576 ]; then
+        echo "BLOCKED: File exceeds 1 MB: $file"
+        failed=1
+    fi
+
+    # Detect common secret-like patterns.
+    if printf '%s\n' "$content" | grep -Eiq \
+        '(API_KEY|SECRET_KEY|PASSWORD|ACCESS_TOKEN)[[:space:]]*=[[:space:]]*["'\''][^"'\'']+["'\'']'; then
+        echo "BLOCKED: Possible secret detected in: $file"
+        failed=1
+    fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+if [ "$failed" -ne 0 ]; then
+    echo "Commit stopped. Remove the flagged content and stage the file again."
+    exit 1
+fi
+
+echo "Pre-commit safety checks passed."
+exit 0
